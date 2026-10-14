@@ -4,6 +4,11 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import org.junit.Assert.*
 import org.junit.Test
 import shop.whitedns.client.model.DnsClientEngine
@@ -117,4 +122,28 @@ class ResolverSurvivalAuditTest {
         assertTrue(store.read().isEmpty())
     }
 
+    @Test fun runtimeWriterBatchesBurstWithoutDroppingOutcomes() {
+        val writes = CopyOnWriteArrayList<List<ResolverOutcome>>()
+        val finished = CountDownLatch(4)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val writer = ResolverSurvivalEventWriter(
+                scope = scope,
+                batchSize = 32,
+                flushWindowMillis = 200,
+                persist = { batch ->
+                    writes += batch
+                    finished.countDown()
+                },
+            )
+            (1..128).forEach { index ->
+                writer.enqueue(listOf(ResolverOutcome("10.1.0.$index", engine, type = ResolverOutcomeType.SUCCESS, observedAtMillis = index.toLong())))
+            }
+            assertTrue("batched writes did not drain", finished.await(5, TimeUnit.SECONDS))
+            assertEquals(4, writes.size)
+            assertEquals((1..128).map { "10.1.0.$it" }.toSet(), writes.flatten().map { it.endpoint }.toSet())
+        } finally {
+            scope.cancel()
+        }
+    }
 }

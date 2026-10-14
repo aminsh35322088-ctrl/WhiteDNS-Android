@@ -94,6 +94,7 @@ import shop.whitedns.client.scan.WhiteDnsScanStateStore
 import shop.whitedns.client.scan.WhiteDnsScannerResultStore
 import shop.whitedns.client.scan.NetworkFingerprintProvider
 import shop.whitedns.client.scan.ResolverSeedLoader
+import shop.whitedns.client.scan.ResolverSurvivalEventWriter
 import shop.whitedns.client.scan.ResolverSurvivalLearningSession
 import shop.whitedns.client.scan.ResolverSurvivalRuntime
 import shop.whitedns.client.scan.ResolverSurvivalRuntimeSelection
@@ -113,6 +114,13 @@ class WhiteDnsViewModel(
     private val settingsStore = WhiteDnsSettingsStore(appContext)
     private val scanSettingsStore = WhiteDnsScanSettingsStore(appContext)
     private val resolverSurvivalStore = ResolverSurvivalStore(appContext)
+    private val resolverSurvivalEventWriter by lazy {
+        ResolverSurvivalEventWriter(
+            scope = viewModelScope,
+            persist = resolverSurvivalStore::record,
+            onFailure = { error -> Log.w(ViewModelTag, "Unable to persist runtime resolver evidence", error) },
+        )
+    }
     private var activeResolverSurvivalSelection: ResolverSurvivalRuntimeSelection? = null
     private var activeResolverSurvivalLearningSession: ResolverSurvivalLearningSession? = null
     private val initialSettings = settingsStore.load()
@@ -2106,12 +2114,7 @@ class WhiteDnsViewModel(
                 scanTelemetry?.let { addAll(learningSession.observeScanTelemetry(it, observedAtMillis)) }
                 resolverState?.let { addAll(learningSession.observeResolverState(it, observedAtMillis)) }
             }
-            if (outcomes.isNotEmpty()) {
-                viewModelScope.launch(Dispatchers.IO) {
-                    runCatching { resolverSurvivalStore.record(outcomes) }
-                        .onFailure { error -> Log.w(ViewModelTag, "Unable to persist runtime resolver evidence", error) }
-                }
-            }
+            resolverSurvivalEventWriter.enqueue(outcomes)
         }
         trackSocksStreamLogLine(message)
         val isTelemetry = trafficStats != null ||
