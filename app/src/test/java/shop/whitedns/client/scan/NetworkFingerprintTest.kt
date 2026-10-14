@@ -28,6 +28,12 @@ class NetworkFingerprintTest {
     }
 
     @Test
+    fun onlyKnownCoarseTransportIsPersistedAndCarrierIsCellularOnly() {
+        assertNull(NetworkFingerprint.fromParts("my-private-wifi-name", "43211", true, false))
+        assertEquals("wifi:v4", NetworkFingerprint.fromParts("wifi", "43211", true, false)?.value)
+    }
+
+    @Test
     fun missingNetworkReturnsNullInsteadOfInventingIdentity() {
         assertNull(NetworkFingerprint.fromParts("", null, false, false))
     }

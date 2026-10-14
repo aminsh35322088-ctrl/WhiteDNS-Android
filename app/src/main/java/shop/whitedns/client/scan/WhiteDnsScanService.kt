@@ -325,7 +325,7 @@ class WhiteDnsScanService : Service() {
 
         when (val telemetry = parseStormDnsScanLine(line)) {
             is StormDnsScanTelemetry.Valid -> {
-                val resolver = WhiteDnsScannerResultStore.normalizeResolverEntry(telemetry.resolver) ?: return
+                val resolver = WhiteDnsScannerResultStore.normalizeResolverEntry(telemetry.resolver, engine) ?: return
                 var validCount = 0
                 var added = false
                 synchronized(stateLock) {
@@ -339,7 +339,7 @@ class WhiteDnsScanService : Service() {
                 publishAggregate(WhiteDnsScanStatus.Running, "Found $validCount valid resolvers", false)
             }
             is StormDnsScanTelemetry.Rejected -> {
-                val resolver = WhiteDnsScannerResultStore.normalizeResolverEntry(telemetry.resolver) ?: return
+                val resolver = WhiteDnsScannerResultStore.normalizeResolverEntry(telemetry.resolver, engine) ?: return
                 synchronized(stateLock) {
                     if (!validResolvers.contains(resolver)) {
                         rejectedResolvers += resolver

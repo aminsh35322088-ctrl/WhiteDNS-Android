@@ -99,8 +99,8 @@ object ResolverSurvivalScoring {
             score += CurrentNetwork
         }
         if (evidence.survivalObserved) score += SurvivalObserved
-        if (evidence.lossRate != null && evidence.lossRate <= LowLossThreshold) score += LowLoss
-        if (evidence.latencyMillis != null && evidence.latencyMillis <= GoodLatencyMillis) score += GoodLatency
+        if (evidence.lossRate != null && evidence.lossRate.isFinite() && evidence.lossRate in 0.0..LowLossThreshold) score += LowLoss
+        if (evidence.latencyMillis != null && evidence.latencyMillis in 0..GoodLatencyMillis) score += GoodLatency
 
         if (evidence.consecutiveFailures > 0) {
             score += RecentFailure
@@ -110,7 +110,12 @@ object ResolverSurvivalScoring {
 
         val lastSuccess = evidence.lastSuccessAtMillis
         if (lastSuccess != null && nowMillis > lastSuccess) {
-            val ageDays = (nowMillis - lastSuccess) / DayMillis
+            val ageMillis = if (lastSuccess < 0 && nowMillis > Long.MAX_VALUE + lastSuccess) {
+                Long.MAX_VALUE
+            } else {
+                nowMillis - lastSuccess
+            }
+            val ageDays = ageMillis / DayMillis
             val decay = ((ageDays / DecayStepDays) * DecayPointsPerStep)
                 .coerceAtMost(MaxDecayPoints.toLong())
                 .toInt()

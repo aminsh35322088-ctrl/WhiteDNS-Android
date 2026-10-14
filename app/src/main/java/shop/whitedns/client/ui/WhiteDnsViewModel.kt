@@ -1947,14 +1947,14 @@ class WhiteDnsViewModel(
                 setScanFailure(previousSessionId, "Scan resume failed: resolver file is missing")
                 return@launch
             }
-            val validEntries = WhiteDnsScannerResultStore.normalizeResolverEntries(previousState.validResolverEntries)
-            val rejectedEntries = WhiteDnsScannerResultStore.normalizeResolverEntries(previousState.rejectedResolverEntries)
-                .filterNot(validEntries::contains)
-            val processed = (validEntries + rejectedEntries).toSet()
-            val sessionId = UUID.randomUUID().toString()
             val scanEngine = DnsClientEngine.normalize(
                 uiState.settings.selectedConnectionProfile().engine,
             )
+            val validEntries = WhiteDnsScannerResultStore.normalizeResolverEntries(previousState.validResolverEntries, scanEngine)
+            val rejectedEntries = WhiteDnsScannerResultStore.normalizeResolverEntries(previousState.rejectedResolverEntries, scanEngine)
+                .filterNot(validEntries::contains)
+            val processed = (validEntries + rejectedEntries).toSet()
+            val sessionId = UUID.randomUUID().toString()
             val resolverFile = File(
                 File(File(appContext.noBackupFilesDir, "$scanEngine/scan"), sessionId).apply { mkdirs() },
                 "resume.resolvers",

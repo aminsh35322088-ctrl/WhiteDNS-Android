@@ -39,8 +39,10 @@ class ResolverSurvivalLearningSession(
         observedAtMillis: Long,
     ): List<ResolverOutcome> {
         if (engine != DnsClientEngine.CottenDns) return emptyList()
-        return (state.activeResolvers + state.validResolvers)
-            .distinct()
+        // In the pinned CottenDNS client, `valid` means MTU-probe capable and can
+        // remain populated after a resolver stops being operational. `active`
+        // contains connections whose current IsValid state is true.
+        return state.activeResolvers.distinct()
             .flatMap { endpoint ->
                 outcomeFor(endpoint, ResolverOutcomeType.SUCCESS, observedAtMillis)
             }
@@ -67,6 +69,7 @@ class ResolverSurvivalLearningSession(
     }
 
     private fun normalizeEndpoint(raw: String): String? {
+        if (raw.length > 255 || raw.contains('/')) return null
         return validateResolverText(raw).normalizedResolvers.singleOrNull()
     }
 }

@@ -21,7 +21,8 @@ object ResolverSurvivalPlanner {
         val seen = linkedSetOf<String>()
 
         fun add(endpoint: String, source: ResolverCandidateSource, score: Int = 0) {
-            val normalizedEndpoint = endpoint.trim()
+            val normalizedEndpoint = shop.whitedns.client.model.validateResolverText(endpoint.trim())
+                .normalizedResolvers.singleOrNull() ?: return
             if (normalizedEndpoint.isEmpty() || !seen.add(normalizedEndpoint)) return
             candidates += ResolverCandidate(normalizedEndpoint, source, score)
         }
@@ -50,7 +51,18 @@ object ResolverSurvivalPlanner {
             }
         }
 
-        provenFor(null).forEach {
+        val failedOnCurrentNetwork = if (currentNetworkFingerprint == null) emptySet() else evidence
+            .asSequence()
+            .filter { DnsClientEngine.normalize(it.engine) == normalizedEngine }
+            .filter { it.networkFingerprint == currentNetworkFingerprint }
+            .filter { it.consecutiveFailures >= RepeatedFailureDemotionThreshold }
+            .map { shop.whitedns.client.model.validateResolverText(it.endpoint).normalizedResolvers.singleOrNull() }
+            .filterNotNull()
+            .toSet()
+
+        provenFor(null).filterNot { evidence ->
+            shop.whitedns.client.model.validateResolverText(evidence.endpoint).normalizedResolvers.singleOrNull() in failedOnCurrentNetwork
+        }.forEach {
             add(
                 endpoint = it.endpoint,
                 source = ResolverCandidateSource.GLOBAL_PROVEN,
@@ -74,7 +86,8 @@ object ResolverSurvivalPlanner {
         )
     }
     private fun hasExplicitCustomPort(endpoint: String): Boolean {
-        val value = endpoint.trim()
+        val value = shop.whitedns.client.model.validateResolverText(endpoint.trim()).normalizedResolvers.singleOrNull()
+            ?: return false
         if (value.startsWith("[")) {
             val close = value.lastIndexOf(']')
             return close > 0 && close + 2 < value.length && value[close + 1] == ':' &&

@@ -4,6 +4,11 @@ import android.content.Context
 import android.util.AtomicFile
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.channels.FileChannel
+import java.nio.file.StandardOpenOption
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import shop.whitedns.client.model.DnsClientEngine
@@ -22,40 +27,67 @@ class ResolverSurvivalStore internal constructor(
     fun read(): List<ResolverEvidence> = readSnapshot().evidence
 
     fun readSnapshot(): ResolverSurvivalSnapshot {
+        return withStoreLock {
+            if (!file.isFile) return@withStoreLock ResolverSurvivalSnapshot(emptyList(), usable = true)
+            runCatching {
+                val raw = if (atomicWrites) {
+                    AtomicFile(file).openRead().bufferedReader(Charsets.UTF_8).use { it.readText() }
+                } else {
+                    file.readText(Charsets.UTF_8)
+                }
+                ResolverSurvivalSnapshot(decode(raw), usable = true)
+            }.getOrElse { ResolverSurvivalSnapshot(emptyList(), usable = false) }
+        }
+    }
+
+    fun record(outcomes: Iterable<ResolverOutcome>) {
+        withStoreLock {
+            val snapshot = readSnapshotUnlocked()
+            check(snapshot.usable) { "Resolver survival store is corrupt or uses an unsupported schema" }
+            val records = snapshot.evidence.associateByTo(linkedMapOf(), ::recordKey)
+            outcomes.forEach { outcome ->
+                if (outcome.observedAtMillis < 0) return@forEach
+                val endpoint = normalizeEvidenceEndpoint(outcome.endpoint) ?: return@forEach
+                val engine = DnsClientEngine.normalize(outcome.engine)
+                val fingerprintValue = outcome.networkFingerprint?.takeIf { it.length <= MaxFingerprintLength && it.isNotBlank() }
+                val scopes = listOf(fingerprintValue, null).distinct()
+                scopes.forEach { fingerprint ->
+                    val key = recordKey(endpoint, engine, fingerprint)
+                    val previous = records[key] ?: ResolverEvidence(
+                        endpoint = endpoint,
+                        engine = engine,
+                        networkFingerprint = fingerprint,
+                    )
+                    records[key] = applyOutcome(previous, outcome.copy(endpoint = endpoint, engine = engine, networkFingerprint = fingerprint))
+                }
+            }
+            writeBounded(records.values.toList())
+        }
+    }
+
+    internal fun replaceForTest(records: List<ResolverEvidence>) = withStoreLock {
+        writeBounded(records)
+    }
+
+    private fun readSnapshotUnlocked(): ResolverSurvivalSnapshot {
         if (!file.isFile) return ResolverSurvivalSnapshot(emptyList(), usable = true)
         return runCatching {
-            val raw = if (atomicWrites) {
-                AtomicFile(file).openRead().bufferedReader(Charsets.UTF_8).use { it.readText() }
-            } else {
-                file.readText(Charsets.UTF_8)
-            }
+            val raw = if (atomicWrites) AtomicFile(file).openRead().bufferedReader(Charsets.UTF_8).use { it.readText() }
+            else file.readText(Charsets.UTF_8)
             ResolverSurvivalSnapshot(decode(raw), usable = true)
         }.getOrElse { ResolverSurvivalSnapshot(emptyList(), usable = false) }
     }
 
-    @Synchronized
-    fun record(outcomes: Iterable<ResolverOutcome>) {
-        val records = read().associateByTo(linkedMapOf(), ::recordKey)
-        outcomes.forEach { outcome ->
-            val endpoint = outcome.endpoint.trim()
-            if (endpoint.isEmpty()) return@forEach
-            val engine = DnsClientEngine.normalize(outcome.engine)
-            val scopes = listOf(outcome.networkFingerprint?.takeIf(String::isNotBlank), null).distinct()
-            scopes.forEach { fingerprint ->
-                val key = recordKey(endpoint, engine, fingerprint)
-                val previous = records[key] ?: ResolverEvidence(
-                    endpoint = endpoint,
-                    engine = engine,
-                    networkFingerprint = fingerprint,
-                )
-                records[key] = applyOutcome(previous, outcome.copy(endpoint = endpoint, engine = engine, networkFingerprint = fingerprint))
+    private fun <T> withStoreLock(block: () -> T): T {
+        val absolutePath = file.absoluteFile.normalize().path
+        val processLock = processLocks.computeIfAbsent(absolutePath) { ReentrantLock() }
+        return processLock.withLock {
+            file.parentFile?.mkdirs()
+            val lockFile = File(file.parentFile ?: file.absoluteFile.parentFile, "${file.name}.lock")
+            FileChannel.open(lockFile.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE).use { channel ->
+                channel.lock().use { block() }
             }
         }
-        writeBounded(records.values.toList())
-    }
-
-    internal fun replaceForTest(records: List<ResolverEvidence>) {
-        writeBounded(records)
     }
 
     private fun writeBounded(records: List<ResolverEvidence>) {
@@ -96,6 +128,11 @@ class ResolverSurvivalStore internal constructor(
     }
 
     private fun applyOutcome(previous: ResolverEvidence, outcome: ResolverOutcome): ResolverEvidence {
+        val sameTypeTimestamp = when (outcome.type) {
+            ResolverOutcomeType.SUCCESS -> previous.lastSuccessAtMillis
+            ResolverOutcomeType.FAILURE, ResolverOutcomeType.INVALID_REPLY -> previous.lastFailureAtMillis
+        }
+        if (sameTypeTimestamp == outcome.observedAtMillis) return previous
         val latestObservedAt = maxOf(
             previous.lastSuccessAtMillis ?: Long.MIN_VALUE,
             previous.lastFailureAtMillis ?: Long.MIN_VALUE,
@@ -113,7 +150,7 @@ class ResolverSurvivalStore internal constructor(
         val survival = previous.survivalObserved || outcome.survivalObserved
         return when (outcome.type) {
             ResolverOutcomeType.SUCCESS -> previous.copy(
-                successfulValidations = previous.successfulValidations + 1,
+                successfulValidations = previous.successfulValidations.saturatingIncrement(),
                 consecutiveFailures = 0,
                 lastSuccessAtMillis = outcome.observedAtMillis,
                 latencyMillis = outcome.latencyMillis ?: previous.latencyMillis,
@@ -122,16 +159,16 @@ class ResolverSurvivalStore internal constructor(
                 scoreVersion = ResolverSurvivalScoring.ScoreVersion,
             )
             ResolverOutcomeType.FAILURE -> previous.copy(
-                failedValidations = previous.failedValidations + 1,
-                consecutiveFailures = previous.consecutiveFailures + 1,
+                failedValidations = previous.failedValidations.saturatingIncrement(),
+                consecutiveFailures = previous.consecutiveFailures.saturatingIncrement(),
                 lastFailureAtMillis = outcome.observedAtMillis,
                 survivalObserved = survival,
                 scoreVersion = ResolverSurvivalScoring.ScoreVersion,
             )
             ResolverOutcomeType.INVALID_REPLY -> previous.copy(
-                failedValidations = previous.failedValidations + 1,
-                invalidReplyFailures = previous.invalidReplyFailures + 1,
-                consecutiveFailures = previous.consecutiveFailures + 1,
+                failedValidations = previous.failedValidations.saturatingIncrement(),
+                invalidReplyFailures = previous.invalidReplyFailures.saturatingIncrement(),
+                consecutiveFailures = previous.consecutiveFailures.saturatingIncrement(),
                 lastFailureAtMillis = outcome.observedAtMillis,
                 survivalObserved = survival,
                 scoreVersion = ResolverSurvivalScoring.ScoreVersion,
@@ -166,15 +203,17 @@ class ResolverSurvivalStore internal constructor(
     }
 
     private fun decode(raw: String): List<ResolverEvidence> {
+        require(raw.length <= MaxStoreBytes) { "Resolver survival store exceeds size limit" }
         val root = JSONObject(raw)
         require(root.optInt("schemaVersion", -1) == SchemaVersion) { "Unsupported survival schema" }
-        val array = root.optJSONArray("records") ?: return emptyList()
+        val array = root.optJSONArray("records") ?: throw IllegalArgumentException("Missing resolver evidence records")
+        require(array.length() <= DefaultMaxRecords) { "Resolver survival record limit exceeded" }
         return buildList {
             for (index in 0 until array.length()) {
-                val item = array.optJSONObject(index) ?: continue
+                val item = array.optJSONObject(index) ?: throw IllegalArgumentException("Invalid resolver evidence record")
                 val endpoint = item.optString("endpoint").trim()
                 val engineRaw = item.optString("engine").trim()
-                if (endpoint.isEmpty() || engineRaw.isEmpty()) continue
+                require(normalizeEvidenceEndpoint(endpoint) != null && engineRaw.isNotEmpty()) { "Invalid resolver evidence identity" }
                 add(
                     ResolverEvidence(
                         endpoint = endpoint,
@@ -215,5 +254,15 @@ class ResolverSurvivalStore internal constructor(
         const val SchemaVersion = 1
         const val DefaultMaxRecords = 512
         private const val StoreRelativePath = "resolver-survival/evidence-v1.json"
+        private const val MaxStoreBytes = 1_048_576
+        private const val MaxFingerprintLength = 64
+        private val processLocks = ConcurrentHashMap<String, ReentrantLock>()
     }
 }
+
+private fun normalizeEvidenceEndpoint(raw: String): String? {
+    if (raw.length > 255 || raw.contains('/')) return null
+    return shop.whitedns.client.model.validateResolverText(raw).normalizedResolvers.singleOrNull()
+}
+
+private fun Int.saturatingIncrement(): Int = if (this == Int.MAX_VALUE) this else this + 1

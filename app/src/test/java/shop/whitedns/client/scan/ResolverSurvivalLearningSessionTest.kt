@@ -52,7 +52,7 @@ class ResolverSurvivalLearningSessionTest {
         val outcomes = session.observeResolverState(state, 3000L)
         val repeated = session.observeResolverState(state, 3001L)
 
-        assertEquals(setOf("1.1.1.1", "9.9.9.9"), outcomes.map { it.endpoint }.toSet())
+        assertEquals(setOf("1.1.1.1"), outcomes.map { it.endpoint }.toSet())
         assertTrue(outcomes.all { it.type == ResolverOutcomeType.SUCCESS })
         assertEquals(emptyList<ResolverOutcome>(), repeated)
     }

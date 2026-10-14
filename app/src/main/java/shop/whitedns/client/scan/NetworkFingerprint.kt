@@ -15,8 +15,8 @@ data class NetworkFingerprint(val value: String) {
             hasIpv4: Boolean,
             hasIpv6: Boolean,
         ): NetworkFingerprint? {
-            val normalizedTransport = transport.trim().lowercase().takeIf(String::isNotEmpty) ?: return null
-            val normalizedCarrier = carrierCode
+            val normalizedTransport = transport.trim().lowercase().takeIf { it in setOf("cellular", "wifi", "ethernet", "vpn", "other") } ?: return null
+            val normalizedCarrier = carrierCode.takeIf { normalizedTransport == "cellular" }
                 ?.trim()
                 ?.takeIf { code -> code.length in 5..6 && code.all(Char::isDigit) }
             val ipFamily = when {
