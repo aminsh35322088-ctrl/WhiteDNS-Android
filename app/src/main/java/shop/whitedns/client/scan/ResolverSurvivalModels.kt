@@ -53,6 +53,17 @@ data class ResolverSurvivalPlan(
 ) {
     val allCandidates: List<ResolverCandidate>
         get() = hotCandidates + remainingCandidates
+
+    fun candidatesForValidation(
+        validResolverCount: Int,
+        minimumValidResolvers: Int,
+    ): List<ResolverCandidate> {
+        return if (validResolverCount >= minimumValidResolvers.coerceAtLeast(1)) {
+            hotCandidates
+        } else {
+            allCandidates
+        }
+    }
 }
 
 object ResolverSurvivalScoring {

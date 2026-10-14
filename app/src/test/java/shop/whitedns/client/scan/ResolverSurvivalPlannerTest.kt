@@ -121,4 +121,19 @@ class ResolverSurvivalPlannerTest {
         assertEquals(5, plan.remainingCandidates.size)
         assertEquals(full, plan.allCandidates.map { it.endpoint })
     }
+    @Test
+    fun insufficientHotSetWidensToRemainingCandidatesInStableOrder() {
+        val full = (1..25).map { "10.0.1.$it" }
+        val plan = ResolverSurvivalPlanner.plan(
+            engine = DnsClientEngine.CottenDns,
+            currentNetworkFingerprint = null,
+            evidence = emptyList(),
+            fullPool = full,
+            nowMillis = now,
+        )
+
+        assertEquals(full.take(20), plan.candidatesForValidation(validResolverCount = 1, minimumValidResolvers = 1).map { it.endpoint })
+        assertEquals(full, plan.candidatesForValidation(validResolverCount = 0, minimumValidResolvers = 1).map { it.endpoint })
+    }
+
 }
