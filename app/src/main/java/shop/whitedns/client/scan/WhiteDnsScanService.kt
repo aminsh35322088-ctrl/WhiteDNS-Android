@@ -152,9 +152,9 @@ class WhiteDnsScanService : Service() {
         val scanRoot = File(File(applicationContext.noBackupFilesDir, "$engine/scan"), sessionId).apply {
             mkdirs()
         }
-        val validResolvers = WhiteDnsScannerResultStore.normalizeResolverEntries(initialValidResolvers)
+        val validResolvers = WhiteDnsScannerResultStore.normalizeResolverEntries(initialValidResolvers, engine)
             .toCollection(linkedSetOf())
-        val rejectedResolvers = WhiteDnsScannerResultStore.normalizeResolverEntries(initialRejectedResolvers)
+        val rejectedResolvers = WhiteDnsScannerResultStore.normalizeResolverEntries(initialRejectedResolvers, engine)
             .filterNot(validResolvers::contains)
             .toCollection(linkedSetOf())
         val workerInputs = partitionResolverFileRoundRobin(
@@ -171,6 +171,8 @@ class WhiteDnsScanService : Service() {
         val totalResolverCount = maxOf(requestedTotalResolvers, pendingResolverCount + initialProcessedCount)
         val startedAtMillis = System.currentTimeMillis()
         var lastAggregatePublishMillis = 0L
+        val survivalObserved = engine == DnsClientEngine.CottenDns &&
+            serverProfile.cottenSettings.normalized().configPreset == "survival"
 
         fun aggregateState(status: String, message: String): WhiteDnsScanState {
             val completed = (initialProcessedCount + workerStats.sumOf { it.completed })
@@ -225,7 +227,7 @@ class WhiteDnsScanService : Service() {
                 WhiteDnsScanStatus.Completed,
                 "Resolver file is empty",
             )
-            writeScanResults(scanRoot, engine, completedState)
+            writeScanResults(scanRoot, engine, completedState, survivalObserved)
             publishState(completedState)
             WhiteDnsScanRequestStore.delete(applicationContext, sessionId)
             exitForeground()
@@ -288,7 +290,7 @@ class WhiteDnsScanService : Service() {
         val finalState = synchronized(stateLock) {
             aggregateState(finalStatus, finalMessage)
         }
-        writeScanResults(scanRoot, engine, finalState)
+        writeScanResults(scanRoot, engine, finalState, survivalObserved)
         publishState(finalState)
         if (finalStatus == WhiteDnsScanStatus.Completed) {
             WhiteDnsScanRequestStore.delete(applicationContext, sessionId)
@@ -541,7 +543,45 @@ class WhiteDnsScanService : Service() {
         }
     }
 
-    private fun writeScanResults(scanRoot: File, engine: String, state: WhiteDnsScanState) {
+    private fun writeScanResults(
+        scanRoot: File,
+        engine: String,
+        state: WhiteDnsScanState,
+        survivalObserved: Boolean,
+    ) {
+        val fingerprint = NetworkFingerprintProvider.current(applicationContext)?.value
+        val observedAt = System.currentTimeMillis()
+        val outcomes = buildList {
+            state.validResolverEntries.forEach { endpoint ->
+                add(
+                    ResolverOutcome(
+                        endpoint = endpoint,
+                        engine = engine,
+                        networkFingerprint = fingerprint,
+                        type = ResolverOutcomeType.SUCCESS,
+                        observedAtMillis = observedAt,
+                        survivalObserved = survivalObserved,
+                    ),
+                )
+            }
+            state.rejectedResolverEntries.forEach { endpoint ->
+                add(
+                    ResolverOutcome(
+                        endpoint = endpoint,
+                        engine = engine,
+                        networkFingerprint = fingerprint,
+                        type = ResolverOutcomeType.FAILURE,
+                        observedAtMillis = observedAt,
+                        survivalObserved = survivalObserved,
+                    ),
+                )
+            }
+        }
+        if (outcomes.isNotEmpty()) {
+            runCatching { ResolverSurvivalStore(applicationContext).record(outcomes) }
+                .onFailure { error -> Log.w(Tag, "Unable to persist resolver survival evidence", error) }
+        }
+
         val resultsDir = File(scanRoot, "results").apply { mkdirs() }
         val scannerResultResolvers = WhiteDnsScannerResultStore.mergeValidResolvers(
             applicationContext,

@@ -119,3 +119,8 @@ object ResolverSurvivalScoring {
         return score
     }
 }
+
+data class ResolverSurvivalSnapshot(
+    val evidence: List<ResolverEvidence>,
+    val usable: Boolean,
+)

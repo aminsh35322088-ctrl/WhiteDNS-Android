@@ -90,6 +90,11 @@ import shop.whitedns.client.scan.WhiteDnsScanService
 import shop.whitedns.client.scan.WhiteDnsScanSettingsStore
 import shop.whitedns.client.scan.WhiteDnsScanStateStore
 import shop.whitedns.client.scan.WhiteDnsScannerResultStore
+import shop.whitedns.client.scan.NetworkFingerprintProvider
+import shop.whitedns.client.scan.ResolverSeedLoader
+import shop.whitedns.client.scan.ResolverSurvivalRuntime
+import shop.whitedns.client.scan.ResolverSurvivalRuntimeSelection
+import shop.whitedns.client.scan.ResolverSurvivalStore
 import shop.whitedns.client.storm.StormDnsBuiltInPool
 import shop.whitedns.client.storm.StormDnsProcessManager
 import shop.whitedns.client.vpn.WhiteDnsVpnService
@@ -103,6 +108,8 @@ class WhiteDnsViewModel(
     private val appContext = application.applicationContext
     private val settingsStore = WhiteDnsSettingsStore(appContext)
     private val scanSettingsStore = WhiteDnsScanSettingsStore(appContext)
+    private val resolverSurvivalStore = ResolverSurvivalStore(appContext)
+    private var activeResolverSurvivalSelection: ResolverSurvivalRuntimeSelection? = null
     private val initialSettings = settingsStore.load()
     private val initialPersistedScanState = WhiteDnsScanStateStore.read(appContext)
     private val initialScanState = initialPersistedScanState
@@ -389,7 +396,31 @@ class WhiteDnsViewModel(
             }
 
             activeServerProfile = serverProfile
-            val runtimeSettings = settings.runtimeConnectionSettings()
+            val survivalSelection = withContext(Dispatchers.IO) {
+                val engine = DnsClientEngine.normalize(connectionProfile.engine)
+                ResolverSurvivalRuntime.prepare(
+                    engine = engine,
+                    originalResolvers = settings.resolve().resolverEntries,
+                    fullPool = WhiteDnsScannerResultStore.readValidResolvers(appContext, engine),
+                    seeds = if (engine == DnsClientEngine.CottenDns) {
+                        ResolverSeedLoader.load(appContext)
+                    } else {
+                        emptyList()
+                    },
+                    currentNetworkFingerprint = NetworkFingerprintProvider.current(appContext)?.value,
+                    store = resolverSurvivalStore,
+                )
+            }
+            activeResolverSurvivalSelection = survivalSelection
+            // The service lifecycle is asynchronous, so phase one feeds the entire ordered
+            // candidate list at launch. CottenDNS fast-connect can stop on early proven
+            // candidates while later tiers remain available without a second service launch.
+            val connectionSettings = if (survivalSelection.applied) {
+                ResolverSurvivalRuntime.applyResolverOrder(settings, survivalSelection.orderedResolvers)
+            } else {
+                settings
+            }
+            val runtimeSettings = connectionSettings.runtimeConnectionSettings()
             val resolvedRuntimeSettings = runtimeSettings.resolve()
             val useParallelTest = settings.autoTuneEnabled &&
                 resolvedRuntimeSettings.connectionMode in ParallelTestConnectionModes
@@ -400,7 +431,7 @@ class WhiteDnsViewModel(
             val started = if (useParallelTest) {
                 runParallelTestConnection(
                     sessionId = sessionId,
-                    baseSettings = settings,
+                    baseSettings = connectionSettings,
                     connectionProfile = connectionProfile,
                     serverProfile = serverProfile,
                 )
@@ -1597,6 +1628,7 @@ class WhiteDnsViewModel(
         activeProxyListenPort = WhiteDnsRuntimeProxy.ListenPortInt
         activeVpnTrafficInterfaceName = null
         activeRuntimeSessionId = ""
+        activeResolverSurvivalSelection = null
         resetTrafficAccounting()
         resetSocksStreamTracker()
         resetRuntimeUiThrottles()

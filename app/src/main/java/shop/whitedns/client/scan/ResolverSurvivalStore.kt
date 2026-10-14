@@ -19,16 +19,18 @@ class ResolverSurvivalStore internal constructor(
         atomicWrites = true,
     )
 
-    fun read(): List<ResolverEvidence> {
+    fun read(): List<ResolverEvidence> = readSnapshot().evidence
+
+    fun readSnapshot(): ResolverSurvivalSnapshot {
+        if (!file.isFile) return ResolverSurvivalSnapshot(emptyList(), usable = true)
         return runCatching {
-            if (!file.isFile) return emptyList()
             val raw = if (atomicWrites) {
                 AtomicFile(file).openRead().bufferedReader(Charsets.UTF_8).use { it.readText() }
             } else {
                 file.readText(Charsets.UTF_8)
             }
-            decode(raw)
-        }.getOrElse { emptyList() }
+            ResolverSurvivalSnapshot(decode(raw), usable = true)
+        }.getOrElse { ResolverSurvivalSnapshot(emptyList(), usable = false) }
     }
 
     @Synchronized
@@ -151,7 +153,7 @@ class ResolverSurvivalStore internal constructor(
 
     private fun decode(raw: String): List<ResolverEvidence> {
         val root = JSONObject(raw)
-        if (root.optInt("schemaVersion", -1) != SchemaVersion) return emptyList()
+        require(root.optInt("schemaVersion", -1) == SchemaVersion) { "Unsupported survival schema" }
         val array = root.optJSONArray("records") ?: return emptyList()
         return buildList {
             for (index in 0 until array.length()) {
