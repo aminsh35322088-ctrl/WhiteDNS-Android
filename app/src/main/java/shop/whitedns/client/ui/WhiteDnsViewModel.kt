@@ -47,6 +47,7 @@ import shop.whitedns.client.model.ConnectionVerificationStatus
 import shop.whitedns.client.model.DnsClientEngine
 import shop.whitedns.client.model.ResolverProfile
 import shop.whitedns.client.model.ResolverRuntimeState
+import shop.whitedns.client.model.ResolverSurvivalStatus
 import shop.whitedns.client.model.ServerDomains
 import shop.whitedns.client.model.ServerTestResult
 import shop.whitedns.client.model.ServerTestState
@@ -341,6 +342,7 @@ class WhiteDnsViewModel(
             connectionStatus = ConnectionStatus.CONNECTING,
             connectionStats = ConnectionStats(),
             resolverRuntimeState = ResolverRuntimeState(),
+            resolverSurvivalStatus = ResolverSurvivalStatus(),
             connectionProgress = ConnectionProgressState(phase = "preparing", percent = 3),
             connectionVerification = ConnectionVerificationState(),
             autoTuneTrialResults = emptyList(),
@@ -427,6 +429,7 @@ class WhiteDnsViewModel(
             uiState = uiState.copy(
                 settings = settings,
                 activeConnectionProfileId = connectionProfile.id,
+                resolverSurvivalStatus = ResolverSurvivalRuntime.status(survivalSelection),
             )
             val started = if (useParallelTest) {
                 runParallelTestConnection(
@@ -1637,6 +1640,7 @@ class WhiteDnsViewModel(
             connectionStatus = ConnectionStatus.DISCONNECTED,
             connectionStats = ConnectionStats(),
             resolverRuntimeState = ResolverRuntimeState(),
+            resolverSurvivalStatus = ResolverSurvivalStatus(),
             connectionProgress = ConnectionProgressState(),
             connectionVerification = ConnectionVerificationState(),
             autoTuneTrialResults = emptyList(),
@@ -2303,6 +2307,7 @@ class WhiteDnsViewModel(
             connectionStatus = ConnectionStatus.DISCONNECTED,
             connectionStats = ConnectionStats(),
             resolverRuntimeState = ResolverRuntimeState(),
+            resolverSurvivalStatus = ResolverSurvivalStatus(),
             connectionProgress = ConnectionProgressState(),
             connectionVerification = ConnectionVerificationState(),
             networkIpAddress = findDeviceNetworkIpAddress(),

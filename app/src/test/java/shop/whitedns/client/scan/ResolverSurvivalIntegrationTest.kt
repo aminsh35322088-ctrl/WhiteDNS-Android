@@ -110,4 +110,21 @@ class ResolverSurvivalIntegrationTest {
         assertEquals(listOf("9.9.9.9", "4.4.4.4"), selection.orderedResolvers)
         assertFalse(selection.applied)
     }
+    @Test
+    fun runtimeSelectionMapsToConciseSurvivalStatus() {
+        val status = ResolverSurvivalRuntime.status(
+            ResolverSurvivalRuntimeSelection(
+                applied = true,
+                initialResolvers = listOf("1.1.1.1"),
+                widenedResolvers = listOf("1.1.1.1"),
+                orderedResolvers = listOf("1.1.1.1"),
+                currentNetworkProvenCount = 3,
+                primarySource = ResolverCandidateSource.NETWORK_PROVEN,
+            ),
+        )
+        assertTrue(status.active)
+        assertEquals(3, status.provenResolverCount)
+        assertEquals("network", status.source)
+    }
+
 }

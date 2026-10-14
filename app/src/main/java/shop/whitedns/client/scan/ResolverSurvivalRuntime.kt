@@ -1,6 +1,7 @@
 package shop.whitedns.client.scan
 
 import shop.whitedns.client.model.DnsClientEngine
+import shop.whitedns.client.model.ResolverSurvivalStatus
 import shop.whitedns.client.model.WhiteDnsSettings
 import shop.whitedns.client.model.selectedConnectionProfile
 import shop.whitedns.client.model.syncSelectedConnectionProfileFields
@@ -15,6 +16,22 @@ data class ResolverSurvivalRuntimeSelection(
 )
 
 object ResolverSurvivalRuntime {
+    fun status(selection: ResolverSurvivalRuntimeSelection): ResolverSurvivalStatus {
+        val source = when (selection.primarySource) {
+            ResolverCandidateSource.NETWORK_PROVEN -> "network"
+            ResolverCandidateSource.GLOBAL_PROVEN -> "global"
+            ResolverCandidateSource.SEED -> "seed"
+            ResolverCandidateSource.USER -> "user"
+            ResolverCandidateSource.FULL_POOL -> "full"
+            null -> ""
+        }
+        return ResolverSurvivalStatus(
+            active = selection.applied,
+            provenResolverCount = selection.currentNetworkProvenCount,
+            source = source,
+        )
+    }
+
     fun prepare(
         engine: String,
         originalResolvers: List<String>,
