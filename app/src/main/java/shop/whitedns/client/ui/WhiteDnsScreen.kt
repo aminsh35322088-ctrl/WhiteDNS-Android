@@ -118,6 +118,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.intl.LocaleList
 import androidx.compose.ui.text.intl.Locale as ComposeLocale
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -150,6 +151,7 @@ import shop.whitedns.client.model.CottenDnsProfileSettings
 import shop.whitedns.client.model.DnsClientEngine
 import shop.whitedns.client.model.ResolverProfile
 import shop.whitedns.client.model.ResolverRuntimeState
+import shop.whitedns.client.model.ResolverSurvivalStatus
 import shop.whitedns.client.model.ServerDomains
 import shop.whitedns.client.model.ServerTestResult
 import shop.whitedns.client.model.ServerTestState
@@ -719,6 +721,7 @@ private fun ConnectTabContent(
                 Column(modifier = Modifier.padding(top = 12.dp)) {
                     ResolverRuntimeSummary(
                         resolverState = uiState.resolverRuntimeState,
+                        survivalStatus = uiState.resolverSurvivalStatus,
                         progressState = uiState.connectionProgress,
                         connectionStatus = uiState.connectionStatus,
                     )
@@ -7508,6 +7511,7 @@ private enum class ResolverRuntimeDialogType {
 @Composable
 private fun ResolverRuntimeSummary(
     resolverState: ResolverRuntimeState,
+    survivalStatus: ResolverSurvivalStatus,
     progressState: ConnectionProgressState,
     connectionStatus: ConnectionStatus,
     modifier: Modifier = Modifier,
@@ -7539,6 +7543,23 @@ private fun ResolverRuntimeSummary(
                 label = WhiteDnsL10n.resolverValidResolvers,
                 value = resolverState.validResolvers.size.toString(),
                 onClick = { selectedDialog = ResolverRuntimeDialogType.VALID },
+            )
+        }
+        AnimatedVisibility(
+            visible = survivalStatus.active,
+            enter = fadeIn(animationSpec = tween(180)),
+            exit = fadeOut(animationSpec = tween(120)),
+        ) {
+            Text(
+                text = WhiteDnsL10n.resolverSurvivalStatus(
+                    survivalStatus.provenResolverCount,
+                    survivalStatus.source,
+                ),
+                style = MaterialTheme.typography.bodySmall.copy(
+                    color = WhiteDnsPalette.Muted,
+                    fontWeight = FontWeight.Medium,
+                ),
+                textAlign = TextAlign.Center,
             )
         }
         AnimatedVisibility(

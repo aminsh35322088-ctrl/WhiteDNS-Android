@@ -340,6 +340,8 @@ object WhiteDnsL10n {
     // Resolver runtime
     val resolverActiveResolvers: String @Composable get() = LocalWhiteDnsStrings.current.resolverActiveResolvers
     val resolverValidResolvers: String @Composable get() = LocalWhiteDnsStrings.current.resolverValidResolvers
+    @Composable fun resolverSurvivalStatus(count: Int, source: String): String =
+        LocalWhiteDnsStrings.current.resolverSurvivalStatus(count, source)
     val resolverPending: String @Composable get() = LocalWhiteDnsStrings.current.resolverPending
     val resolverNoResolvers: String @Composable get() = LocalWhiteDnsStrings.current.resolverNoResolvers
     val backgroundScanningInProgress: String @Composable get() = LocalWhiteDnsStrings.current.backgroundScanningInProgress

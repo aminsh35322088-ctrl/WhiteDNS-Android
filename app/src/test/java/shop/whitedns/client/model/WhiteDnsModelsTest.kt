@@ -1177,4 +1177,12 @@ class WhiteDnsModelsTest {
         val paddedPayload = payload.padEnd(payload.length + ((4 - payload.length % 4) % 4), '=')
         return Base64.getUrlDecoder().decode(paddedPayload).toString(Charsets.UTF_8)
     }
+    @Test
+    fun defaultUiStateHasNoResolverSurvivalHistory() {
+        val status = WhiteDnsUiState().resolverSurvivalStatus
+        assertEquals(false, status.active)
+        assertEquals(0, status.provenResolverCount)
+        assertEquals("", status.source)
+    }
+
 }

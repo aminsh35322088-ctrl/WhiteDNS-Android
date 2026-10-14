@@ -586,6 +586,12 @@ data class ResolverRuntimeState(
     val validResolvers: List<String> = emptyList(),
 )
 
+data class ResolverSurvivalStatus(
+    val active: Boolean = false,
+    val provenResolverCount: Int = 0,
+    val source: String = "",
+)
+
 data class ConnectionProgressState(
     val phase: String = "idle",
     val percent: Int = 0,
@@ -755,6 +761,7 @@ data class WhiteDnsUiState(
     val connectionLogs: List<String> = listOf("Idle"),
     val connectionStats: ConnectionStats = ConnectionStats(),
     val resolverRuntimeState: ResolverRuntimeState = ResolverRuntimeState(),
+    val resolverSurvivalStatus: ResolverSurvivalStatus = ResolverSurvivalStatus(),
     val connectionProgress: ConnectionProgressState = ConnectionProgressState(),
     val connectionVerification: ConnectionVerificationState = ConnectionVerificationState(),
     val autoTuneTrialResults: List<AutoTuneTrialResult> = emptyList(),

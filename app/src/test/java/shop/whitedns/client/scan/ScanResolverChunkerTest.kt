@@ -1,6 +1,7 @@
 package shop.whitedns.client.scan
 
 import java.io.File
+import shop.whitedns.client.model.DnsClientEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -33,15 +34,38 @@ class ScanResolverChunkerTest {
     }
 
     @Test
-    fun normalizeScanResolverTextStripsPortsBeforeScanning() {
+    fun normalizeScanResolverTextPreservesCustomPortsForCottenDns() {
         val validation = WhiteDnsScannerResultStore.normalizeScanResolverText(
-            """
-            1.1.1.1:52
-            8.8.8.8:53
-            9.9.9.9:5353
-            192.168.10.0/30:5300
-            [2001:4860:4860::8888]:5353
+            rawText = """
+                8.8.8.8:5353
+                8.8.4.4:53
+                [2001:4860:4860::8888]:5353
             """.trimIndent(),
+            engine = DnsClientEngine.CottenDns,
+        )
+
+        assertEquals(emptyList<String>(), validation.invalidEntries)
+        assertEquals(
+            listOf(
+                "8.8.8.8:5353",
+                "8.8.4.4",
+                "[2001:4860:4860:0:0:0:0:8888]:5353",
+            ),
+            validation.normalizedResolvers,
+        )
+    }
+
+    @Test
+    fun normalizeScanResolverTextStillStripsPortsForStormDns() {
+        val validation = WhiteDnsScannerResultStore.normalizeScanResolverText(
+            rawText = """
+                1.1.1.1:52
+                8.8.8.8:53
+                9.9.9.9:5353
+                192.168.10.0/30:5300
+                [2001:4860:4860::8888]:5353
+            """.trimIndent(),
+            engine = DnsClientEngine.StormDns,
         )
 
         assertEquals(emptyList<String>(), validation.invalidEntries)

@@ -1,0 +1,6 @@
+# Offline bootstrap candidates for Iran survival mode.
+# These are hints already present in the WhiteDNS resolver corpus.
+# They are NOT guaranteed to remain reachable during national-network restrictions.
+80.191.221.26
+2.188.21.58
+37.75.244.53

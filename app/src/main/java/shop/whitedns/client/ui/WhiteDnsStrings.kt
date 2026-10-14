@@ -194,6 +194,7 @@ interface WhiteDnsStrings {
     // Resolver runtime
     val resolverActiveResolvers: String
     val resolverValidResolvers: String
+    fun resolverSurvivalStatus(count: Int, source: String): String
     val resolverPending: String
     val resolverNoResolvers: String
     val backgroundScanningInProgress: String
@@ -939,6 +940,17 @@ object EnglishStrings : WhiteDnsStrings {
     // Resolver runtime
     override val resolverActiveResolvers = "Active Resolvers"
     override val resolverValidResolvers = "Valid Resolvers"
+    override fun resolverSurvivalStatus(count: Int, source: String): String {
+        val sourceLabel = when (source) {
+            "network" -> "network-proven"
+            "global" -> "global-proven"
+            "seed" -> "offline seed"
+            "user" -> "user profile"
+            "full" -> "full pool"
+            else -> "ready"
+        }
+        return "Survival: $count proven for this network · $sourceLabel"
+    }
     override val resolverPending = "Pending"
     override val resolverNoResolvers = "You need resolvers to connect."
     override val backgroundScanningInProgress = "Background scanning in progress"
@@ -1661,6 +1673,17 @@ object PersianStrings : WhiteDnsStrings {
     // Resolver runtime
     override val resolverActiveResolvers = "ریزالورهای فعال"
     override val resolverValidResolvers = "ریزالورهای معتبر"
+    override fun resolverSurvivalStatus(count: Int, source: String): String {
+        val sourceLabel = when (source) {
+            "network" -> "تأییدشده روی همین شبکه"
+            "global" -> "تأییدشده عمومی"
+            "seed" -> "لیست آفلاین"
+            "user" -> "پروفایل کاربر"
+            "full" -> "لیست کامل"
+            else -> "آماده"
+        }
+        return "حالت بقا: $count ریزالور تأییدشده برای این شبکه · $sourceLabel"
+    }
     override val resolverPending = "در انتظار"
     override val resolverNoResolvers = "برای اتصال به ریزالور نیاز دارید."
     override val backgroundScanningInProgress = "اسکن پس‌زمینه در حال انجام است"
