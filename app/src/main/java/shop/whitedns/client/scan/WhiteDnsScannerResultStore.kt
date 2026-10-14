@@ -51,7 +51,7 @@ object WhiteDnsScannerResultStore {
                 emptySet()
             } else {
                 AtomicFile(file).openRead().bufferedReader(Charsets.UTF_8).useLines { lines ->
-                    normalizeScanResolverSet(lines)
+                    normalizeScanResolverSet(lines, engine)
                 }
             }
         }.getOrDefault(emptySet())
@@ -62,7 +62,7 @@ object WhiteDnsScannerResultStore {
      * the full cross-engine view for display.
      */
     fun mergeValidResolvers(context: Context, engine: String, resolvers: Iterable<String>): List<String> {
-        val incomingResolvers = normalizeResolverEntries(resolvers)
+        val incomingResolvers = normalizeResolverEntries(resolvers, engine)
         if (incomingResolvers.isEmpty()) {
             return readValidResolvers(context, engine)
         }
@@ -78,7 +78,7 @@ object WhiteDnsScannerResultStore {
             var wroteResolver = false
             FileOutputStream(target, true).use { stream ->
                 resolvers.forEach { rawResolver ->
-                    val resolver = normalizeResolverEntry(rawResolver) ?: return@forEach
+                    val resolver = normalizeResolverEntry(rawResolver, engine) ?: return@forEach
                     if (target.length() > 0L || wroteResolver) {
                         stream.write("\n".toByteArray(Charsets.UTF_8))
                     }
@@ -89,22 +89,34 @@ object WhiteDnsScannerResultStore {
         }
     }
 
-    fun normalizeResolverText(rawText: String): List<String> {
-        return normalizeScanResolverText(rawText).normalizedResolvers
+    fun normalizeResolverText(
+        rawText: String,
+        engine: String = DnsClientEngine.StormDns,
+    ): List<String> {
+        return normalizeScanResolverText(rawText, engine).normalizedResolvers
     }
 
-    fun normalizeScanResolverText(rawText: String): ResolverTextValidation {
+    fun normalizeScanResolverText(
+        rawText: String,
+        engine: String = DnsClientEngine.StormDns,
+    ): ResolverTextValidation {
         val validation = validateResolverText(rawText)
+        val normalizedEngine = DnsClientEngine.normalize(engine)
         return validation.copy(
             normalizedResolvers = validation.normalizedResolvers
-                .map(::stripScanResolverPort)
+                .map { resolver ->
+                    if (normalizedEngine == DnsClientEngine.CottenDns) resolver else stripScanResolverPort(resolver)
+                }
                 .distinct(),
         )
     }
 
-    fun normalizeScanResolverFile(file: File): ResolverTextValidation {
+    fun normalizeScanResolverFile(
+        file: File,
+        engine: String = DnsClientEngine.StormDns,
+    ): ResolverTextValidation {
         return file.bufferedReader(Charsets.UTF_8).useLines { lines ->
-            normalizeScanResolverLines(lines)
+            normalizeScanResolverLines(lines, engine)
         }
     }
 
@@ -134,6 +146,7 @@ object WhiteDnsScannerResultStore {
         lines: Sequence<String>,
         outputFile: File,
         excludedResolvers: Set<String> = emptySet(),
+        engine: String = DnsClientEngine.StormDns,
     ): ScanResolverFileSummary {
         outputFile.parentFile?.mkdirs()
         val seenResolvers = mutableSetOf<String>()
@@ -148,7 +161,7 @@ object WhiteDnsScannerResultStore {
                 if (line.isEmpty() || line.startsWith("#")) {
                     return@forEach
                 }
-                val validation = normalizeScanResolverText(line)
+                val validation = normalizeScanResolverText(line, engine)
                 invalidEntryCount += validation.invalidEntries.size
                 validation.normalizedResolvers.forEach { resolver ->
                     if (!seenResolvers.add(resolver)) {
@@ -179,6 +192,7 @@ object WhiteDnsScannerResultStore {
     fun rewritePendingScanResolverFile(
         file: File,
         excludedResolvers: Set<String> = emptySet(),
+        engine: String = DnsClientEngine.StormDns,
     ): ScanResolverFileSummary {
         val tempFile = File(file.parentFile, "${file.name}.tmp")
         val summary = file.bufferedReader(Charsets.UTF_8).useLines { lines ->
@@ -186,13 +200,17 @@ object WhiteDnsScannerResultStore {
                 lines = lines,
                 outputFile = tempFile,
                 excludedResolvers = excludedResolvers,
+                engine = engine,
             )
         }
         replaceFile(tempFile, file)
         return summary
     }
 
-    fun normalizeScanResolverLines(lines: Sequence<String>): ResolverTextValidation {
+    fun normalizeScanResolverLines(
+        lines: Sequence<String>,
+        engine: String = DnsClientEngine.StormDns,
+    ): ResolverTextValidation {
         val normalizedResolvers = mutableListOf<String>()
         val invalidEntries = mutableListOf<String>()
         val seenResolvers = mutableSetOf<String>()
@@ -203,7 +221,7 @@ object WhiteDnsScannerResultStore {
             if (line.isEmpty() || line.startsWith("#")) {
                 return@forEach
             }
-            val validation = normalizeScanResolverText(line)
+            val validation = normalizeScanResolverText(line, engine)
             validation.normalizedResolvers.forEach { resolver ->
                 if (seenResolvers.add(resolver)) {
                     normalizedResolvers += resolver
@@ -222,24 +240,33 @@ object WhiteDnsScannerResultStore {
         )
     }
 
-    private fun normalizeScanResolverSet(lines: Sequence<String>): Set<String> {
+    private fun normalizeScanResolverSet(
+        lines: Sequence<String>,
+        engine: String,
+    ): Set<String> {
         val normalizedResolvers = linkedSetOf<String>()
         lines.forEach { rawLine ->
             val line = rawLine.trim()
             if (line.isEmpty() || line.startsWith("#")) {
                 return@forEach
             }
-            normalizeScanResolverText(line).normalizedResolvers.forEach(normalizedResolvers::add)
+            normalizeScanResolverText(line, engine).normalizedResolvers.forEach(normalizedResolvers::add)
         }
         return normalizedResolvers
     }
 
-    fun normalizeResolverEntries(resolvers: Iterable<String>): List<String> {
-        return normalizeResolverText(resolvers.joinToString(separator = "\n"))
+    fun normalizeResolverEntries(
+        resolvers: Iterable<String>,
+        engine: String = DnsClientEngine.StormDns,
+    ): List<String> {
+        return normalizeResolverText(resolvers.joinToString(separator = "\n"), engine)
     }
 
-    fun normalizeResolverEntry(resolver: String): String? {
-        return normalizeResolverEntries(listOf(resolver)).firstOrNull()
+    fun normalizeResolverEntry(
+        resolver: String,
+        engine: String = DnsClientEngine.StormDns,
+    ): String? {
+        return normalizeResolverEntries(listOf(resolver), engine).firstOrNull()
     }
 
     private fun writeValidResolvers(context: Context, engine: String, resolvers: List<String>) {

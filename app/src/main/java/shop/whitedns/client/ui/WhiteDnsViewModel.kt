@@ -1914,6 +1914,7 @@ class WhiteDnsViewModel(
                             lines = lines,
                             outputFile = resolverFile,
                             excludedResolvers = excludedResolvers,
+                            engine = scanEngine,
                         )
                     }.pendingResolverCount
                 }
@@ -2358,6 +2359,7 @@ class WhiteDnsViewModel(
                 WhiteDnsScannerResultStore.writePendingScanResolverFile(
                     lines = lines,
                     outputFile = resolverFile,
+                    engine = selectedScanEngine(),
                 )
             }
             ?: throw IllegalArgumentException("Unable to open resolver file")
@@ -2385,6 +2387,7 @@ class WhiteDnsViewModel(
                 WhiteDnsScannerResultStore.writePendingScanResolverFile(
                     lines = lines,
                     outputFile = resolverFile,
+                    engine = selectedScanEngine(),
                 )
             }
         if (summary.totalResolverCount == 0) {
