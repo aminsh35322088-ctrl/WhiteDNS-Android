@@ -4,6 +4,7 @@ import shop.whitedns.client.model.DnsClientEngine
 
 object ResolverSurvivalPlanner {
     const val DefaultHotSetSize = 20
+    private const val RepeatedFailureDemotionThreshold = 2
 
     fun plan(
         engine: String,
@@ -29,6 +30,7 @@ object ResolverSurvivalPlanner {
             .asSequence()
             .filter { DnsClientEngine.normalize(it.engine) == normalizedEngine }
             .filter { it.successfulValidations > 0 }
+            .filter { it.consecutiveFailures < RepeatedFailureDemotionThreshold }
             .filter { it.networkFingerprint == fingerprint }
             .sortedWith(
                 compareByDescending<ResolverEvidence> {
@@ -55,8 +57,14 @@ object ResolverSurvivalPlanner {
                 score = ResolverSurvivalScoring.score(it, currentNetworkFingerprint, nowMillis),
             )
         }
+
+        // A user-supplied non-default port denotes a direct resolver/server endpoint,
+        // such as BotKeep's allocated UDP ingress. Trying ordinary recursive seeds
+        // before it can only add delay because those seeds cannot reach that custom
+        // port. Keep these explicit direct endpoints ahead of bootstrap seeds.
+        userResolvers.filter(::hasExplicitCustomPort).forEach { add(it, ResolverCandidateSource.USER) }
         seeds.forEach { add(it, ResolverCandidateSource.SEED) }
-        userResolvers.forEach { add(it, ResolverCandidateSource.USER) }
+        userResolvers.filterNot(::hasExplicitCustomPort).forEach { add(it, ResolverCandidateSource.USER) }
         fullPool.forEach { add(it, ResolverCandidateSource.FULL_POOL) }
 
         val boundedHotSetSize = hotSetSize.coerceAtLeast(0)
@@ -65,4 +73,16 @@ object ResolverSurvivalPlanner {
             remainingCandidates = candidates.drop(boundedHotSetSize),
         )
     }
+    private fun hasExplicitCustomPort(endpoint: String): Boolean {
+        val value = endpoint.trim()
+        if (value.startsWith("[")) {
+            val close = value.lastIndexOf(']')
+            return close > 0 && close + 2 < value.length && value[close + 1] == ':' &&
+                value.substring(close + 2).all(Char::isDigit)
+        }
+        if (value.count { it == ':' } != 1) return false
+        val port = value.substringAfterLast(':')
+        return port.isNotEmpty() && port.all(Char::isDigit)
+    }
+
 }

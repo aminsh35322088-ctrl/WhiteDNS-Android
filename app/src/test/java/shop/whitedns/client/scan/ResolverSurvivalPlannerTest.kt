@@ -136,4 +136,67 @@ class ResolverSurvivalPlannerTest {
         assertEquals(full, plan.candidatesForValidation(validResolverCount = 0, minimumValidResolvers = 1).map { it.endpoint })
     }
 
+    @Test
+    fun directCustomPortUserResolverPrecedesSeedsAndBulkPool() {
+        val plan = ResolverSurvivalPlanner.plan(
+            engine = DnsClientEngine.CottenDns,
+            currentNetworkFingerprint = null,
+            evidence = emptyList(),
+            seeds = listOf("80.191.221.26"),
+            userResolvers = listOf("5.196.80.66:43629"),
+            fullPool = listOf("2.188.21.58"),
+            nowMillis = now,
+        )
+
+        assertEquals("5.196.80.66:43629", plan.allCandidates.first().endpoint)
+        assertEquals(ResolverCandidateSource.USER, plan.allCandidates.first().source)
+    }
+
+    @Test
+    fun repeatedlyFailingLearnedResolverFallsOutOfProvenTiersUntilItRecovers() {
+        val failedNetwork = ResolverEvidence(
+            endpoint = "1.1.1.1",
+            engine = DnsClientEngine.CottenDns,
+            networkFingerprint = "cell",
+            successfulValidations = 4,
+            failedValidations = 2,
+            consecutiveFailures = 2,
+            lastSuccessAtMillis = now - 1_000,
+            lastFailureAtMillis = now,
+        )
+        val healthyGlobal = ResolverEvidence(
+            endpoint = "8.8.8.8",
+            engine = DnsClientEngine.CottenDns,
+            successfulValidations = 1,
+            lastSuccessAtMillis = now - 10_000,
+        )
+
+        val failedPlan = ResolverSurvivalPlanner.plan(
+            engine = DnsClientEngine.CottenDns,
+            currentNetworkFingerprint = "cell",
+            evidence = listOf(failedNetwork, healthyGlobal),
+            seeds = listOf("9.9.9.9"),
+            userResolvers = listOf("1.1.1.1"),
+            nowMillis = now,
+        )
+        assertEquals("8.8.8.8", failedPlan.allCandidates.first().endpoint)
+        assertEquals(ResolverCandidateSource.USER, failedPlan.allCandidates.first { it.endpoint == "1.1.1.1" }.source)
+
+        val recovered = failedNetwork.copy(
+            consecutiveFailures = 0,
+            successfulValidations = 5,
+            lastSuccessAtMillis = now + 1,
+        )
+        val recoveredPlan = ResolverSurvivalPlanner.plan(
+            engine = DnsClientEngine.CottenDns,
+            currentNetworkFingerprint = "cell",
+            evidence = listOf(recovered, healthyGlobal),
+            seeds = listOf("9.9.9.9"),
+            userResolvers = listOf("1.1.1.1"),
+            nowMillis = now + 1,
+        )
+        assertEquals("1.1.1.1", recoveredPlan.allCandidates.first().endpoint)
+        assertEquals(ResolverCandidateSource.NETWORK_PROVEN, recoveredPlan.allCandidates.first().source)
+    }
+
 }
