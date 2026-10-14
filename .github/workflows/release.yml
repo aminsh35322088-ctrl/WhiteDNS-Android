@@ -82,7 +82,7 @@ jobs:
           VERSION_NAME="${TAG_NAME#v}"
           ./gradlew :app:assembleRelease \
             -PWHITE_DNS_VERSION_NAME="${VERSION_NAME}" \
-            -PWHITE_DNS_VERSION_CODE="${GITHUB_RUN_NUMBER}"
+            -PWHITE_DNS_VERSION_CODE="$((19 + GITHUB_RUN_NUMBER))"
 
       - name: Sign release APKs
         env:
@@ -107,6 +107,14 @@ jobs:
           TAG_NAME="${GITHUB_REF_NAME}"
           KEYSTORE_PATH="${RUNNER_TEMP}/whitedns-release.keystore"
           echo "${ANDROID_SIGNING_KEYSTORE_BASE64}" | base64 --decode > "${KEYSTORE_PATH}"
+
+          keytool -exportcert -keystore "${KEYSTORE_PATH}" \
+            -storepass:env ANDROID_SIGNING_STORE_PASSWORD \
+            -alias "${ANDROID_SIGNING_KEY_ALIAS}" \
+            -file "${RUNNER_TEMP}/release-certificate.der"
+          openssl x509 -in docs/release-signing-cert.pem -outform DER \
+            -out "${RUNNER_TEMP}/expected-certificate.der"
+          cmp "${RUNNER_TEMP}/release-certificate.der" "${RUNNER_TEMP}/expected-certificate.der"
 
           BUILD_TOOLS_DIR="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           mkdir -p dist
@@ -151,9 +159,11 @@ jobs:
           NOTES_FILE="${RUNNER_TEMP}/release-notes.md"
 
           cat > "${NOTES_FILE}" <<EOF
-          Official WhiteDNS release for ${TAG_NAME}.
+          WhiteDNS Android fork release for ${TAG_NAME}.
 
-          WhiteDNS is not published on Google Play. APKs attached to this GitHub release are the official release artifacts for this tag.
+          Iran Survival Resolver hardening; custom resolver ports, safe concurrent evidence persistence, and batched runtime learning. The CottenDNS client remains pinned to 1f3cc524dddbc9d59ca2b312f4408a813efa8f71 and is qualified against the fork server.
+
+          WhiteDNS is not published on Google Play. APKs attached to this GitHub release are signed release artifacts of aminsh35322088-ctrl/WhiteDNS-Android. This fork uses its own signing certificate; it cannot upgrade an installation signed by upstream.
 
           See LICENSE.MD, CONTRIBUTING.md, CLA.md, and TRADEMARK.MD before using or contributing to this project.
           EOF
