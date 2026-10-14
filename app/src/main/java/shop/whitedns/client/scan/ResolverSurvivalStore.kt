@@ -96,6 +96,20 @@ class ResolverSurvivalStore internal constructor(
     }
 
     private fun applyOutcome(previous: ResolverEvidence, outcome: ResolverOutcome): ResolverEvidence {
+        val latestObservedAt = maxOf(
+            previous.lastSuccessAtMillis ?: Long.MIN_VALUE,
+            previous.lastFailureAtMillis ?: Long.MIN_VALUE,
+        )
+        if (outcome.observedAtMillis < latestObservedAt) {
+            return previous
+        }
+        if (
+            outcome.observedAtMillis == latestObservedAt &&
+            previous.lastSuccessAtMillis == latestObservedAt &&
+            outcome.type != ResolverOutcomeType.SUCCESS
+        ) {
+            return previous
+        }
         val survival = previous.survivalObserved || outcome.survivalObserved
         return when (outcome.type) {
             ResolverOutcomeType.SUCCESS -> previous.copy(

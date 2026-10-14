@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
+import android.util.Log
 import android.net.TrafficStats
 import android.os.PowerManager
 import android.provider.OpenableColumns
@@ -93,9 +94,11 @@ import shop.whitedns.client.scan.WhiteDnsScanStateStore
 import shop.whitedns.client.scan.WhiteDnsScannerResultStore
 import shop.whitedns.client.scan.NetworkFingerprintProvider
 import shop.whitedns.client.scan.ResolverSeedLoader
+import shop.whitedns.client.scan.ResolverSurvivalLearningSession
 import shop.whitedns.client.scan.ResolverSurvivalRuntime
 import shop.whitedns.client.scan.ResolverSurvivalRuntimeSelection
 import shop.whitedns.client.scan.ResolverSurvivalStore
+import shop.whitedns.client.scan.parseStormDnsScanLine
 import shop.whitedns.client.storm.StormDnsBuiltInPool
 import shop.whitedns.client.storm.StormDnsProcessManager
 import shop.whitedns.client.vpn.WhiteDnsVpnService
@@ -111,6 +114,7 @@ class WhiteDnsViewModel(
     private val scanSettingsStore = WhiteDnsScanSettingsStore(appContext)
     private val resolverSurvivalStore = ResolverSurvivalStore(appContext)
     private var activeResolverSurvivalSelection: ResolverSurvivalRuntimeSelection? = null
+    private var activeResolverSurvivalLearningSession: ResolverSurvivalLearningSession? = null
     private val initialSettings = settingsStore.load()
     private val initialPersistedScanState = WhiteDnsScanStateStore.read(appContext)
     private val initialScanState = initialPersistedScanState
@@ -336,6 +340,7 @@ class WhiteDnsViewModel(
         runtimeRefreshJob?.cancel()
         verificationJob?.cancel()
         serverTestJob?.cancel()
+        activeResolverSurvivalLearningSession = null
         val sessionId = UUID.randomUUID().toString()
         activeRuntimeSessionId = sessionId
         uiState = uiState.copy(
@@ -398,8 +403,11 @@ class WhiteDnsViewModel(
             }
 
             activeServerProfile = serverProfile
+            val engine = DnsClientEngine.normalize(connectionProfile.engine)
+            val networkFingerprint = withContext(Dispatchers.IO) {
+                NetworkFingerprintProvider.current(appContext)?.value
+            }
             val survivalSelection = withContext(Dispatchers.IO) {
-                val engine = DnsClientEngine.normalize(connectionProfile.engine)
                 ResolverSurvivalRuntime.prepare(
                     engine = engine,
                     originalResolvers = settings.resolve().resolverEntries,
@@ -409,11 +417,20 @@ class WhiteDnsViewModel(
                     } else {
                         emptyList()
                     },
-                    currentNetworkFingerprint = NetworkFingerprintProvider.current(appContext)?.value,
+                    currentNetworkFingerprint = networkFingerprint,
                     store = resolverSurvivalStore,
                 )
             }
             activeResolverSurvivalSelection = survivalSelection
+            activeResolverSurvivalLearningSession = if (engine == DnsClientEngine.CottenDns) {
+                ResolverSurvivalLearningSession(
+                    engine = engine,
+                    networkFingerprint = networkFingerprint,
+                    survivalObserved = serverProfile.cottenSettings.normalized().configPreset == "survival",
+                )
+            } else {
+                null
+            }
             // The service lifecycle is asynchronous, so phase one feeds the entire ordered
             // candidate list at launch. CottenDNS fast-connect can stop on early proven
             // candidates while later tiers remain available without a second service launch.
@@ -1632,6 +1649,7 @@ class WhiteDnsViewModel(
         activeVpnTrafficInterfaceName = null
         activeRuntimeSessionId = ""
         activeResolverSurvivalSelection = null
+        activeResolverSurvivalLearningSession = null
         resetTrafficAccounting()
         resetSocksStreamTracker()
         resetRuntimeUiThrottles()
@@ -2077,15 +2095,32 @@ class WhiteDnsViewModel(
         val trafficStats = parseStormDnsTrafficStatsLine(message)
         val progressState = parseStormDnsConnectionProgressLine(message)
         val resolverState = parseStormDnsResolverStateLine(message)
+        val scanTelemetry = parseStormDnsScanLine(message)
         if (trafficStats != null) {
             stormDnsTrafficAccounting.record(trafficStats)
+        }
+        val learningSession = activeResolverSurvivalLearningSession
+        if (learningSession != null) {
+            val observedAtMillis = System.currentTimeMillis()
+            val outcomes = buildList {
+                scanTelemetry?.let { addAll(learningSession.observeScanTelemetry(it, observedAtMillis)) }
+                resolverState?.let { addAll(learningSession.observeResolverState(it, observedAtMillis)) }
+            }
+            if (outcomes.isNotEmpty()) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    runCatching { resolverSurvivalStore.record(outcomes) }
+                        .onFailure { error -> Log.w(ViewModelTag, "Unable to persist runtime resolver evidence", error) }
+                }
+            }
         }
         trackSocksStreamLogLine(message)
         val isTelemetry = trafficStats != null ||
             progressState != null ||
             resolverState != null ||
+            scanTelemetry != null ||
             message.contains("WD_PROGRESS") ||
-            message.contains("WD_RESOLVERS")
+            message.contains("WD_RESOLVERS") ||
+            message.contains("WD_SCAN")
         if (progressState == null && resolverState == null && isTelemetry) {
             return
         }
@@ -2152,6 +2187,8 @@ class WhiteDnsViewModel(
             activeProxyListenPort = WhiteDnsRuntimeProxy.ListenPortInt
             activeVpnTrafficInterfaceName = null
             activeRuntimeSessionId = ""
+            activeResolverSurvivalSelection = null
+            activeResolverSurvivalLearningSession = null
             resetTrafficAccounting()
             resetSocksStreamTracker()
             resetRuntimeUiThrottles()
@@ -2159,6 +2196,7 @@ class WhiteDnsViewModel(
                 connectionStatus = ConnectionStatus.DISCONNECTED,
                 connectionStats = ConnectionStats(),
                 resolverRuntimeState = ResolverRuntimeState(),
+                resolverSurvivalStatus = ResolverSurvivalStatus(),
                 connectionProgress = ConnectionProgressState(),
                 connectionVerification = ConnectionVerificationState(),
                 networkIpAddress = findDeviceNetworkIpAddress(),
@@ -2188,6 +2226,8 @@ class WhiteDnsViewModel(
             activeProxyListenPort = WhiteDnsRuntimeProxy.ListenPortInt
             activeVpnTrafficInterfaceName = null
             activeRuntimeSessionId = ""
+            activeResolverSurvivalSelection = null
+            activeResolverSurvivalLearningSession = null
             resetTrafficAccounting()
             resetSocksStreamTracker()
             resetRuntimeUiThrottles()
@@ -2195,6 +2235,7 @@ class WhiteDnsViewModel(
                 connectionStatus = ConnectionStatus.DISCONNECTED,
                 connectionStats = ConnectionStats(),
                 resolverRuntimeState = ResolverRuntimeState(),
+                resolverSurvivalStatus = ResolverSurvivalStatus(),
                 connectionProgress = ConnectionProgressState(),
                 connectionVerification = ConnectionVerificationState(),
                 networkIpAddress = findDeviceNetworkIpAddress(),
@@ -2262,6 +2303,16 @@ class WhiteDnsViewModel(
             .syncSelectedConnectionProfileFields()
         activeProxyListenPort = state.listenPort.takeIf { it > 0 }
             ?: restoredSettings.runtimeConnectionSettings().resolve().listenPort
+        val restoredProfile = restoredSettings.selectedConnectionProfile()
+        activeResolverSurvivalLearningSession = if (DnsClientEngine.normalize(restoredProfile.engine) == DnsClientEngine.CottenDns) {
+            ResolverSurvivalLearningSession(
+                engine = restoredProfile.engine,
+                networkFingerprint = NetworkFingerprintProvider.current(appContext)?.value,
+                survivalObserved = restoredProfile.cottenSettings.normalized().configPreset == "survival",
+            )
+        } else {
+            null
+        }
         activeVpnTrafficInterfaceName = null
         resetTrafficAccounting()
         resetSocksStreamTracker()
@@ -2300,6 +2351,7 @@ class WhiteDnsViewModel(
         activeProxyListenPort = WhiteDnsRuntimeProxy.ListenPortInt
         activeVpnTrafficInterfaceName = null
         activeRuntimeSessionId = ""
+        activeResolverSurvivalLearningSession = null
         resetTrafficAccounting()
         resetSocksStreamTracker()
         resetRuntimeUiThrottles()
@@ -3130,3 +3182,5 @@ class WhiteDnsViewModel(
     }
 
 }
+
+private const val ViewModelTag = "WhiteDnsViewModel"

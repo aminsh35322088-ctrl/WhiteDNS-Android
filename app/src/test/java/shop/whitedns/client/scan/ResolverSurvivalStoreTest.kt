@@ -119,4 +119,45 @@ class ResolverSurvivalStoreTest {
         )
         assertEquals(setOf("1.1.1.1", "1.1.1.1:5353"), store.read().map { it.endpoint }.toSet())
     }
+    @Test
+    fun staleOutcomeCannotOverwriteNewerSuccessfulEvidence() {
+        val (_, store) = tempStore()
+        store.record(
+            listOf(
+                ResolverOutcome("1.1.1.1", DnsClientEngine.CottenDns, null, ResolverOutcomeType.SUCCESS, 2000L),
+            ),
+        )
+        store.record(
+            listOf(
+                ResolverOutcome("1.1.1.1", DnsClientEngine.CottenDns, null, ResolverOutcomeType.FAILURE, 1000L),
+            ),
+        )
+
+        val record = store.read().single()
+        assertEquals(1, record.successfulValidations)
+        assertEquals(0, record.failedValidations)
+        assertEquals(0, record.consecutiveFailures)
+        assertEquals(2000L, record.lastSuccessAtMillis)
+    }
+
+    @Test
+    fun successWinsWhenFailureArrivesWithSameTimestamp() {
+        val (_, store) = tempStore()
+        store.record(
+            listOf(
+                ResolverOutcome("1.1.1.1", DnsClientEngine.CottenDns, null, ResolverOutcomeType.SUCCESS, 2000L),
+            ),
+        )
+        store.record(
+            listOf(
+                ResolverOutcome("1.1.1.1", DnsClientEngine.CottenDns, null, ResolverOutcomeType.FAILURE, 2000L),
+            ),
+        )
+
+        val record = store.read().single()
+        assertEquals(1, record.successfulValidations)
+        assertEquals(0, record.failedValidations)
+        assertEquals(0, record.consecutiveFailures)
+    }
+
 }
